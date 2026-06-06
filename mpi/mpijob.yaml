@@ -1,0 +1,38 @@
+apiVersion: kubeflow.org/v1
+kind: MPIJob
+metadata:
+  name: mpi-pi
+  namespace: default
+spec:
+  slotsPerWorker: 2
+  runPolicy:
+    cleanPodPolicy: Running
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+        spec:
+          containers:
+          - name: launcher
+            # ← 替换为教师提供的 SWR mpi4py 镜像地址
+            image: swr.cn-north-4.myhuaweicloud.com/<YOUR_ORG>/mpi4py:latest
+            command:
+            - mpirun
+            - -n
+            - "4"           # 总进程数 = slotsPerWorker x workerReplicas
+            - python
+            - /opt/mpi/pi_mpi.py
+    Worker:
+      replicas: 2           # ← 调整此值做多进程性能测试
+      template:
+        spec:
+          containers:
+          - name: worker
+            image: swr.cn-north-4.myhuaweicloud.com/<YOUR_ORG>/mpi4py:latest
+            resources:
+              requests:
+                cpu: "1"
+                memory: "1Gi"
+              limits:
+                cpu: "2"
+                memory: "2Gi"
