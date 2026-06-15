@@ -25,7 +25,7 @@
 │   │  Grafana 自定义 Dashboard: CPU 折线图 + 内存柱状图│    │
 │   └──────────────────────────────────────────────────┘    │
 │                                                            │
-│   Spark Operator (PySpark) / MPI Operator (mpi4py)        │
+│   Spark Operator (PySpark) / PyTorchJob (DDP) / MPI Operator (mpi4py) │
 │                                                            │
 │   HPA: Backend 1-4 副本 (CPU > 60% 自动扩容)               │
 └───────────────────────────────────────────────────────────┘
@@ -71,11 +71,24 @@ cloud-project/
 │   ├── prometheus-configmap.yaml    # Prometheus 抓取配置（备用）
 │   └── grafana-deployment.yaml      # Grafana 轻量部署（备用）
 ├── spark/
-│   ├── sparkapplication.yaml        # Spark 作业模板
-│   └── wordcount.py                 # PySpark WordCount 示例
+│   ├── sparkapplication.yaml        # Spark 作业模板（已更新）
+│   ├── wordcount.py                 # PySpark WordCount 示例
+│   ├── douban_cleaning.py           # 数据清洗 + Spark SQL 分析（A-1 & A-2）
+│   └── comparison.py                # PySpark 性能基准测试（A-3）
 ├── mpi/
 │   ├── mpijob.yaml                  # MPI 作业模板
 │   └── pi_mpi.py                    # 蒙特卡洛求 π 示例
+├── ml/
+│   ├── Dockerfile                   # PyTorch 训练镜像
+│   ├── pytorchjob.yaml             # PyTorchJob DDP 分布式训练（C-0~C-3）
+│   ├── train_mnist_ddp.py          # CNN + DDP 训练脚本
+│   └── data/                        # MNIST 数据目录
+├── performance_cmp/
+│   ├── pandas_test.py               # Pandas 单机性能测试
+│   ├── pyspark_test.py              # PySpark 性能测试
+│   ├── plot_results.py              # 绘制对比图表 + Amdahl 分析
+│   ├── douban_movies.csv            # 豆瓣电影数据集
+│   └── query1_performance_comparison.png  # 性能对比图
 └── 云计算课程设计_离线资源包_SparkOperator+MPI+Monitoring/
     ├── 课程设计任务书.docx
     ├── 课设问题合集.pdf
@@ -107,63 +120,9 @@ cloud-project/
 
 ---
 
-## 四、第二部分：并行编程实战（待完成 🔲，40分）
+## 四、第二部分：并行编程实战（已完成 ✅，40分）
 
-> **说明**：第二部分基于第一部分已有的 CCE 集群、SWR 仓库、GitHub 仓库继续开发。选择一个方向（Spark 或 MPI），完成对应任务。
-
-### 当前华为云环境（已就绪，无需重新创建）
-
-| 资源 | 状态 | 关键信息 |
-|------|------|---------|
-| CCE 集群 | ✅ 运行中 | 2 个 Worker 节点，Region: `cn-east-3` |
-| SWR 镜像仓库 | ✅ 已创建 | 组织: `cloudcourse`，已有 `backend`/`frontend` 仓库 |
-| ELB 负载均衡 | ✅ 已绑定 | Backend 和 Frontend 的 Service 已绑定公网 IP |
-| Redis | ✅ 运行中 | PVC 持久化，密码: `redis123` |
-| Prometheus + Grafana | ✅ 运行中 | Grafana: `admin` / `admin123456` |
-| GitHub Actions CI/CD | ✅ 已配置 | Push 到 main 自动构建推送镜像 |
-
-### 4.1 第二部分同学环境接入指南
-
-由于共用一个华为云账号，第二部分同学**无需**重新创建集群、SWR 仓库等。只需完成以下接入步骤：
-
-#### Step 1：拉取代码仓库
-```bash
-git clone <GitHub 仓库地址>
-cd cloud-project
-```
-
-#### Step 2：配置 kubectl 连接 CCE 集群
-1. 登录 [华为云控制台](https://console.huaweicloud.com)（账号密码找第一部分同学获取）
-2. 进入 **CCE（云容器引擎）** → 点击已有集群名称
-3. 点击 **kubectl** 标签页 → 下载 kubeconfig 文件
-4. 放置配置文件：
-   - Linux/Mac: `~/.kube/config`
-   - Windows: `%USERPROFILE%\.kube\config`
-   - 或 WSL 中: `~/.kube/config`
-5. 验证连接：
-   ```bash
-   kubectl get nodes
-   # 应看到 2 个 Ready 的 Worker 节点
-   kubectl get pods -n default
-   # 应看到 backend、frontend、redis、monitoring-* 等 Pod 都在 Running
-   ```
-
-#### Step 3：配置 Docker 登录 SWR（如需本地构建镜像）
-```bash
-# 获取登录密码：华为云控制台 → SWR → 总览 → 生成登录指令
-docker login -u cn-east-3@<AK> -p <密码> swr.cn-east-3.myhuaweicloud.com
-```
-
-#### Step 4：配置 GitHub（如需使用 CI/CD）
-- GitHub Secrets 已在第一部分配置好，无需重复配置
-- 如果换了新的 GitHub 仓库，需要重新配置 Secrets：
-  - 进入仓库 Settings → Secrets → Actions → New secret
-  - `SWR_USERNAME`：`cn-east-3@HST3WK7PLHQZ4WCV04FS`
-  - `SWR_PASSWORD`：找第一部分同学获取
-
----
-
-### 4.2 方向 A：Spark 大数据分析（选做）
+### 4.1 方向 A：Spark 大数据分析（已完成 ✅）
 
 #### A-0 环境部署（10分）
 ```bash
@@ -179,59 +138,59 @@ helm install spark-op 云计算课程设计_离线资源包_SparkOperator+MPI+Mo
 kubectl create serviceaccount spark -n default
 kubectl create clusterrolebinding spark-edit --clusterrole=edit --serviceaccount=default:spark
 
-# 4. 修改 spark/sparkapplication.yaml 中的镜像地址（替换为教师提供的 SWR PySpark 镜像）
-# 5. 提交 WordCount 作业验证
+# 4. 提交分析作业
 kubectl apply -f spark/sparkapplication.yaml
 kubectl get pods -n default -w  # 观察 Driver 和 Executor Pod
 ```
 
-**验收**：Driver Pod 状态 Completed，`kubectl logs <driver-pod>` 输出 Top 10 单词。
+#### A-1 数据清洗（10分）→ `spark/douban_cleaning.py`
+- 加载豆瓣电影 CSV 数据（OBS `s3a://` 路径）
+- 打印 Schema → 统计缺失值 → dropna/fillna 处理 → 输出清洗前后统计对比
 
-#### A-1 数据清洗（10分）
-- 数据集路径见课程群公告（OBS `s3a://` 地址）
-- 加载数据 → 打印 Schema → 统计缺失值 → 2 种处理策略（dropna/fillna）→ 输出清洗前后对比
+#### A-2 Spark SQL 统计分析（15分）→ `spark/douban_cleaning.py`
+- Query 1: GROUP BY 按电影类型统计数量和平均评分
+- Query 2: ORDER BY Top-N 最高评分电影
+- Query 3: 时间维度趋势（按年份统计平均评分）
+- Query 4: 窗口函数 ROW_NUMBER() 每类型最高评分电影
 
-#### A-2 Spark SQL 统计分析（15分）
-- 至少 4 个查询：GROUP BY 聚合、ORDER BY Top-N、时间维度趋势、JOIN 或窗口函数
-- 每个查询附截图 + ≥50 字分析
-
-#### A-3 性能对比与 Amdahl 分析（5分）
+#### A-3 性能对比与 Amdahl 分析（5分）→ `performance_cmp/`
 - Pandas（单机）vs PySpark（1/2 Executor）对比
-- 绘制对比图 + Amdahl 定律分析
+- 对比柱状图 + Amdahl 定律分析
+- 文件：`pandas_test.py`, `pyspark_test.py`, `plot_results.py`
 
----
+### 4.2 方向 C：PyTorch DDP 分布式训练（已完成 ✅）
 
-### 4.3 方向 B：MPI 并行科学计算（选做）
-
-#### B-0 环境部署（10分）
+#### C-0 环境部署（10分）
 ```bash
-# 1. 导入离线镜像
-docker load -i 云计算课程设计_离线资源包_SparkOperator+MPI+Monitoring/离线包/mpi/mpi4py-latest.tar
+# 1. 构建 PyTorch 镜像
+docker build -t pytorch-mnist:latest ml/
 
-# 2. 部署 MPI Operator
-kubectl apply -f 云计算课程设计_离线资源包_SparkOperator+MPI+Monitoring/离线包/mpi/mpi-operator.yaml
+# 2. 推送镜像到 SWR
+docker tag pytorch-mnist:latest swr.cn-east-3.myhuaweicloud.com/cloudcourse/pytorch-mnist:latest
+docker push swr.cn-east-3.myhuaweicloud.com/cloudcourse/pytorch-mnist:latest
 
-# 3. 修改 mpi/mpijob.yaml 中的镜像地址（替换为教师提供的 SWR mpi4py 镜像）
-# 4. 提交 π 估算作业验证
-kubectl apply -f mpi/mpijob.yaml
-kubectl logs -f <launcher-pod>  # 查看 π 估算结果
+# 3. 创建 ConfigMap（训练代码）
+kubectl create configmap ml-code --from-file=ml/train_mnist_ddp.py -n default
+
+# 4. 提交 PyTorchJob
+kubectl apply -f ml/pytorchjob.yaml
+kubectl get pods -n default -w  # 观察 Master + Worker Pod
 ```
 
-**验收**：Launcher Pod 日志输出 `π ≈ 3.1415xx`。
+#### C-1 CNN 模型实现（10分）→ `ml/train_mnist_ddp.py`
+- 自定义 CNN 网络（Conv2d → ReLU → MaxPool → Dropout → FC）
+- 支持单 GPU 训练 和 DDP 分布式训练两种模式
+- 使用 MNIST 手写数字数据集
 
-#### B-1 并行算法实现（10分）
-三选一：并行矩阵乘法 / 数值积分（梯形法） / 并行排序（奇偶换序）
-- 实现串行版 + MPI 并行版，结果一致
-- 通信原语加注释，附通信模式示意图
+#### C-2 DDP 分布式训练（10分）→ `ml/train_mnist_ddp.py`
+- 使用 PyTorch DistributedDataParallel (DDP)
+- DistributedSampler 数据分区 + gloo 后端通信
+- 1 Master + 2 Workers 共 3 进程并行训练
+- 日志输出每个 Epoch 的 Loss 和时间
 
-#### B-2 性能测试与 Amdahl 分析（15分）
-- 1/2/4 进程各运行 3 次取平均
-- 填写时间表格 + 绘制实测 vs Amdahl 理论加速比双折线图
-- 分析差距原因
-
-#### B-3 非阻塞通信优化（5分）
-- 将一处关键通信改为 `Isend`/`Irecv`
-- 对比阻塞版 vs 非阻塞版执行时间
+#### C-3 性能对比分析（5分）→ `ml/train_mnist_ddp.py`
+- 单 GPU vs DDP (3 进程) 训练时间对比
+- 分析加速比和并行效率
 
 ---
 
@@ -290,6 +249,7 @@ kubectl rollout restart deployment/frontend -n default
 | 前端 | Nginx 1.25, HTML/CSS |
 | 大数据 | Apache Spark (PySpark), Spark Operator |
 | 高性能计算 | MPI (mpi4py), MPI Operator (Kubeflow) |
+| 分布式训练 | PyTorch DDP, PyTorchJob (Kubeflow Training Operator) |
 | 监控 | Prometheus, Grafana, Alertmanager |
 | 存储 | 华为云 EVS (CSI Disk), PVC |
 | 网络 | 华为云 ELB (LoadBalancer) |
